@@ -1,0 +1,23 @@
+# Model weights (auto-downloaded by Ultralytics on first run)
+*.pt
+*.onnx
+*.engine
+
+# Datasets (auto-downloaded or too large for git)
+datasets/
+
+# Generated outputs
+outputs/
+experiments/*.json
+runs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

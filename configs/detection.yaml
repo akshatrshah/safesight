@@ -1,0 +1,20 @@
+# Configuration for the detection module.
+# Nothing here should be hard-coded in Python — scripts read this file.
+
+model_name: "yolov8n.pt"   # try "yolov8m.pt" for the accuracy/latency comparison
+
+confidence_threshold: 0.35
+
+# COCO pretrained classes that overlap with warehouse targets.
+# "forklift" is NOT a native COCO class — until we fine-tune on a
+# forklift dataset, "truck" is the closest proxy class for evaluation.
+target_classes:
+  - person
+  - truck
+
+benchmark:
+  models_to_compare:
+    - "yolov8n.pt"
+    - "yolov8m.pt"
+  num_warmup_frames: 5
+  num_timed_frames: 30
