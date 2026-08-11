@@ -1,26 +1,42 @@
 # SafeSight: Real-Time Warehouse Perception and Risk Prediction System
 
-> A Voxel-inspired research and engineering project exploring production computer vision for workplace safety. This project does not reproduce Voxel's proprietary technology, and does not claim any knowledge of Voxel's internal architecture — it demonstrates hands-on engineering with the perception problems (object detection, tracking, pose, activity recognition, risk prediction, anomaly detection) described in Voxel's public Software Engineer, Perception job description.
+## Why I Built This
 
-## What This Project Is
+I wanted to go deep on computer vision and perception engineering instead of just reading about it. Object detection, tracking, pose estimation, temporal modeling, risk scoring: I wanted to actually build each of these from the ground up, understand the math behind them, and be able to explain every design decision I made, not just call a library function and hope it works.
 
-Warehouses use security cameras for safety monitoring, but raw video isn't actionable on its own. This project builds a perception pipeline that takes monocular camera footage and progressively extracts structure from it: **what** objects are here (detection) → **which** object is which, over time (tracking) → **how** a person is positioned (pose) → **what** they're doing (temporal activity recognition) → **where** in the facility this is happening (spatial zones) → **is this becoming dangerous** (risk prediction) → **is anything statistically unusual** (anomaly detection).
+So I built SafeSight: a full perception pipeline for a real, hard problem. Take ordinary security camera footage from a warehouse, no special sensors, no depth cameras, just a single 2D camera, and figure out whether a worker and a piece of moving equipment are heading toward a dangerous interaction, before it becomes an accident.
 
-Every stage is built and evaluated independently. Every number in this README is measured by actually running the code in this repo — none are estimated or fabricated. Where results are on synthetic/placeholder data rather than real labeled data, that's stated explicitly.
+This project is general purpose. The pipeline architecture, the individual modules, and the engineering decisions here apply to any monocular video perception problem: retail loss prevention, construction site safety, sports analytics, traffic monitoring. Warehouse safety is just the concrete problem I picked to ground the work in something real.
+
+Every number in this README comes from actually running the code in this repository. Where a result is based on synthetic or placeholder data instead of real labeled data, I say so explicitly. I would rather be upfront about what is proven and what is not than overstate what this system can currently do.
+
+## What SafeSight Does
+
+The pipeline takes video and progressively builds understanding, one layer at a time:
+
+1. **Detection**: what objects are in this frame, and how confident is the model.
+2. **Tracking**: which object is which, across frames, so the system has memory instead of treating every frame as brand new.
+3. **Pose estimation**: how is a tracked person's body positioned right now.
+4. **Temporal activity recognition**: what is that person doing, based on how their position changes over roughly the last second, not just one frozen frame.
+5. **Spatial reasoning**: which zone of the facility is this happening in.
+6. **Risk prediction**: is this interaction between a person and a moving object becoming dangerous, scored two different ways so I could compare them honestly.
+7. **Anomaly detection**: is something statistically unusual happening, even if I never wrote an explicit rule for it.
+
+I built and tested each stage independently before wiring them together, so I could always tell which part of the system was responsible for a given result.
 
 ## Project Status
 
 | Stage | What it answers | Status |
 |---|---|---|
-| Object detection | What objects are in this frame? | **Implemented**, pretrained COCO weights |
-| Object detection (fine-tuned) | What objects are in this frame, on real warehouse data? | **In progress** — fine-tuned on a LOCO subset; forklift class needs a class-imbalance fix (see Fine-Tuning Results below) |
-| Multi-object tracking | Which object is which, across frames? | **Implemented** |
-| Pose estimation | How is this person's body positioned? | **Implemented** |
-| Temporal activity recognition | What are they doing, over time? | **Implemented** (synthetic training data) |
-| Spatial reasoning (zones) | Where in the facility is this happening? | **Implemented** |
-| Risk prediction | Is this interaction becoming dangerous? | **Implemented** (heuristic + learned, synthetic training data) |
-| Anomaly detection | Is something unusual happening? | **Implemented** (rule-based + ML, synthetic training data) |
-| Event engine, Kafka, Go backend, Redis, PostgreSQL | Production event infrastructure | Deferred by design — this project is scoped to the perception layer |
+| Object detection | What objects are in this frame? | Implemented, using pretrained COCO weights |
+| Object detection, fine tuned | What objects are in this frame, on real target domain data? | In progress. Fine tuned on a real logistics dataset. The rarest class needs a class imbalance fix I have already identified but not yet re run. |
+| Multi object tracking | Which object is which, across frames? | Implemented |
+| Pose estimation | How is this person's body positioned? | Implemented |
+| Temporal activity recognition | What are they doing, over time? | Implemented, trained on synthetic data |
+| Spatial reasoning, zones | Where in the facility is this happening? | Implemented |
+| Risk prediction | Is this interaction becoming dangerous? | Implemented, both a heuristic model and a learned model, trained on synthetic data |
+| Anomaly detection | Is something unusual happening? | Implemented, both rule based and machine learning based, trained on synthetic data |
+| Event streaming, backend, database | Production infrastructure to serve this at scale | Deliberately out of scope for this phase. I focused my time on the perception layer specifically. |
 
 ## Setup
 
@@ -32,164 +48,182 @@ chmod +x setup.sh
 source venv/bin/activate
 ```
 
-`setup.sh` creates a virtual environment and installs everything in `requirements.txt`. Run it once; after that just `source venv/bin/activate` in new terminal sessions.
+`setup.sh` creates a virtual environment and installs everything in `requirements.txt`. Run it once. After that, just `source venv/bin/activate` in new terminal sessions.
 
 ## Repository Structure
 
 ```
 safesight/
 ├── perception/
-│   ├── detection/       # YOLO wrapper + precision/recall/mAP evaluation
-│   ├── tracking/         # ByteTrack wrapper + position history/velocity
-│   ├── pose/              # YOLOv8-pose wrapper + joint angle math
-│   ├── spatial/            # Zone polygons + point-in-polygon checks
-│   ├── risk/                # Heuristic + learned (gradient-boosted trees) risk models
-│   ├── temporal/              # Synthetic activity data + baseline MLP + LSTM
-│   ├── anomaly/                 # Rule-based + Isolation Forest anomaly detection
-│   └── utils/                     # IoU + NMS, implemented from scratch
+│   ├── detection/       YOLO wrapper, plus precision, recall, and mAP evaluation
+│   ├── tracking/         ByteTrack wrapper, plus position history and velocity
+│   ├── pose/              Pose estimation wrapper, plus joint angle math
+│   ├── spatial/            Zone polygons and point in polygon checks
+│   ├── risk/                Heuristic risk model and a learned (gradient boosted trees) risk model
+│   ├── temporal/              Synthetic activity data, a baseline MLP, and an LSTM
+│   ├── anomaly/                 Rule based and Isolation Forest anomaly detection
+│   └── utils/                     IoU and NMS, implemented from scratch
 ├── scripts/
-│   ├── run_detection.py            # Visual detection sanity check
-│   ├── benchmark_latency.py         # Model-size latency/FPS comparison
-│   ├── run_pipeline_demo.py          # Full stack wired together, end to end
-│   ├── run_experiments.py             # Risk/activity/anomaly model comparisons
-│   ├── download_loco.py                # Downloads a subset of the real LOCO dataset
-│   ├── convert_loco_to_yolo.py          # Converts LOCO's COCO annotations to YOLO format
-│   └── finetune_detector.py              # Fine-tunes YOLO on real labeled data
-├── tests/                                  # 42 tests across every perception module
+│   ├── run_detection.py            Visual detection sanity check
+│   ├── benchmark_latency.py         Model size latency and FPS comparison
+│   ├── run_pipeline_demo.py          The full stack wired together, end to end
+│   ├── run_experiments.py             Risk, activity, and anomaly model comparisons
+│   ├── download_loco.py                Downloads a subset of a real, public logistics dataset
+│   ├── convert_loco_to_yolo.py          Converts those annotations into YOLO format
+│   └── finetune_detector.py              Fine tunes the detector on real labeled data
+├── tests/                                  42 tests across every perception module
 ├── configs/
-│   └── detection.yaml                       # Thresholds, target classes, models
-├── sample_data/                                  # Sample image for smoke-testing
-├── conftest.py                                    # Makes `perception` importable by pytest
-└── setup.sh                                        # Environment bootstrap
+│   └── detection.yaml                       Thresholds, target classes, and model choice
+├── sample_data/                               A sample image for smoke testing
+├── conftest.py                                 Makes the perception package importable by pytest
+└── setup.sh                                     Environment bootstrap script
 ```
 
 ## Running Everything
 
 ### Tests
+
 ```bash
 pytest tests/ -v
 ```
-Expect `42 passed`. Covers geometry math (IoU/NMS against hand-calculated values), detection schema, tracking velocity/history, pose joint-angle math, zone geometry, risk TTC calculations, temporal model shapes, and anomaly detection logic.
 
-### Detection (pretrained COCO weights)
+I expect this to show 42 passed. The tests cover geometry math checked against hand calculated values, detection output schema, tracking velocity and history, pose joint angle math, zone geometry, risk time to collision calculations, temporal model shapes, and anomaly detection logic.
+
+### Detection, pretrained weights
+
 ```bash
 python scripts/run_detection.py --source sample_data --out outputs/annotated
 ```
-Expect: annotated images saved to `outputs/annotated/`, boxes drawn around detected people/vehicles with class + confidence labels.
+
+This saves annotated images to `outputs/annotated/`, with boxes drawn around detected people and vehicles, labeled with class and confidence.
 
 ```bash
 python scripts/benchmark_latency.py --source sample_data/bus.jpg
 ```
-Expect: a latency (ms) and FPS table comparing `yolov8n` vs `yolov8m`.
+
+This prints a latency and FPS comparison between the small and medium YOLO model sizes.
 
 ```bash
 python perception/detection/evaluate.py
 ```
-Expect: precision/recall/mAP@50/mAP@50:95 on Ultralytics' COCO8 sample set (see Results below).
 
-### Full integrated pipeline
+This prints precision, recall, mAP at 50, and mAP at 50 through 95 on a small sample evaluation set. See Results below for what I actually measured.
+
+### The full integrated pipeline
+
 ```bash
 python scripts/run_pipeline_demo.py --source sample_data/bus.jpg
 ```
-Expect: tracking IDs assigned to detected people, pose estimated, zone membership checked, pairwise interaction risk scores printed. Output also saved to `experiments/pipeline_demo_output.json`.
 
-### Research experiments (risk / activity / anomaly model comparisons)
+This runs tracking, pose estimation, zone membership checks, and pairwise interaction risk scoring together on one real image, and saves the output to `experiments/pipeline_demo_output.json`.
+
+### Research experiments
+
 ```bash
 python scripts/run_experiments.py
 ```
-Expect: three comparisons printed and saved to `experiments/perception_experiments_results.json` — heuristic vs. learned risk model, baseline MLP vs. LSTM activity recognition, rule-based vs. Isolation Forest anomaly detection. All three currently run on synthetic data (see Results below for what that does and doesn't prove).
 
-### Fine-tuning on real data (LOCO dataset)
+This runs and saves three comparisons: heuristic versus learned risk scoring, a hand engineered baseline versus an LSTM for activity recognition, and rule based versus Isolation Forest anomaly detection. All three currently run on synthetic data I generated myself. See Results below for exactly what that does and does not prove.
+
+### Fine tuning on real data
+
 ```bash
 python scripts/download_loco.py --images-per-subset 150
 python scripts/convert_loco_to_yolo.py
 python scripts/finetune_detector.py --data datasets/loco_yolo/data.yaml --epochs 15 --imgsz 416 --device mps
 ```
-See Results below for what came out of a first real run. `--device mps` forces Apple Silicon GPU training (much faster than CPU on a Mac); use `--device 0` for an NVIDIA GPU, or omit the flag to let Ultralytics auto-detect.
+
+This downloads a small sample of a real, publicly available logistics dataset (I used LOCO, built by the Technical University of Munich, which is public domain), converts its annotations into YOLO format, and fine tunes a pretrained detector on it. `--device mps` uses an Apple Silicon GPU if you have one, which is dramatically faster than CPU. Use `--device 0` for an NVIDIA GPU, or leave the flag off to let it auto detect.
 
 ## Results
 
-### Detection — pretrained COCO weights (Milestone 1)
-Evaluated on Ultralytics' COCO8 sample set — proves the evaluation harness is correct, not a warehouse-specific accuracy claim.
+### Detection, pretrained COCO weights
 
-| Model | Precision | Recall | mAP@50 | mAP@50:95 |
+Evaluated on a small standard sample set. This confirms my evaluation code is correct. It is not a claim about how well this detects warehouse specific objects.
+
+| Model | Precision | Recall | mAP at 50 | mAP at 50 through 95 |
 |---|---|---|---|---|
-| yolov8n.pt | 0.621 | 0.833 | 0.888 | 0.629 |
-| yolov8m.pt | 0.811 | 0.853 | 0.928 | 0.740 |
+| yolov8n | 0.621 | 0.833 | 0.888 | 0.629 |
+| yolov8m | 0.811 | 0.853 | 0.928 | 0.740 |
 
-### Detection — fine-tuned on real LOCO warehouse data
-Dataset: [LOCO (Logistics Objects in Context)](https://github.com/tum-fml/loco), Technical University of Munich — public domain, real logistics environments. Citation: Mayershofer, C., Holm, D.-M., Molter, B., Fottner, J., "LOCO: Logistics Objects in Context", IEEE ICMLA 2020.
+### Detection, fine tuned on real logistics data
 
-First real fine-tuning run: 750 images (150 randomly sampled per warehouse subset, using LOCO's own official train/val split), 15 epochs, 416px, on Apple M3 (MPS).
+I fine tuned on 750 real images (150 randomly sampled from each of 5 real warehouse recording sessions in the LOCO dataset), for 15 epochs, at 416 pixels, on an Apple M3 using its GPU.
 
-| Class | Instances (val) | Precision | Recall | mAP@50 | mAP@50:95 |
+| Class | Instances in validation | Precision | Recall | mAP at 50 | mAP at 50 through 95 |
 |---|---|---|---|---|---|
 | pallet | 7,475 | 0.336 | 0.376 | 0.277 | 0.099 |
-| small_load_carrier | 1,300 | 0.266 | 0.329 | 0.216 | 0.074 |
+| small load carrier | 1,300 | 0.266 | 0.329 | 0.216 | 0.074 |
 | stillage | 259 | 0.330 | 0.135 | 0.115 | 0.051 |
-| pallet_truck | 136 | 0.459 | 0.175 | 0.197 | 0.085 |
-| **forklift** | **12** | **0.054** | **0.083** | **0.017** | **0.010** |
-| **Overall** | 9,182 | 0.289 | 0.220 | 0.165 | 0.064 |
+| pallet truck | 136 | 0.459 | 0.175 | 0.197 | 0.085 |
+| forklift | 12 | 0.054 | 0.083 | 0.017 | 0.010 |
+| overall | 9,182 | 0.289 | 0.220 | 0.165 | 0.064 |
 
-**Honest reading — this is a real, diagnosed class-imbalance problem, not a training bug.** forklift is the rarest class in the entire LOCO dataset: 598 of 151,428 total annotations (0.39%), present in only 449 of 5,097 total images (~8.8%). Random sampling of 750 images pulled almost none of them (12 forklift instances landed in the 300-image validation split), so the model had almost no signal to learn forklift from — while `pallet` (79.5% of all annotations) learned a real, if modest, signal in just 15 epochs.
+Here is what I actually found when I looked into why forklift performed so much worse than everything else. It is not a training bug. Forklift is genuinely the rarest object in the entire dataset: only 598 of 151,428 total annotations, about 0.39 percent, appearing in only about 9 percent of all images. When I randomly sampled 750 images, chance alone gave me almost no forklift examples to learn from, only 12 in my whole validation set. Meanwhile pallet, which makes up almost 80 percent of all annotations, actually learned a real signal in just 15 epochs.
 
-**Fix identified, not yet re-run:** `download_loco.py`'s sampling was updated to guarantee every forklift-containing image gets included first, with the remaining budget filled randomly — rather than leaving forklift representation to chance. Re-running the download + fine-tune with this fix is the next concrete step before treating forklift detection numbers as meaningful.
+I have already rewritten my sampling logic to fix this: it now guarantees every image containing a forklift gets included first, before filling the rest of the sample randomly. I have not re run training with the fix yet. That is my clear next step before I would treat forklift detection numbers as meaningful.
 
-### Risk prediction: heuristic vs. learned (synthetic interaction data)
-| Model | Precision (macro) | Recall (macro) | F1 (macro) |
+### Risk prediction: heuristic versus learned
+
+Tested on synthetic interaction data I generated myself.
+
+| Model | Precision, macro average | Recall, macro average | F1, macro average |
 |---|---|---|---|
-| Heuristic (hand-written formula) | 0.55 | 0.40 | 0.35 |
-| Learned (gradient-boosted trees) | 0.99 | 1.00 | 0.99 |
+| Heuristic, a hand written formula | 0.55 | 0.40 | 0.35 |
+| Learned, gradient boosted trees | 0.99 | 1.00 | 0.99 |
 
-Honest reading: the learned model wins here largely because the heuristic's thresholds (150px, 3s TTC) were never tuned against the synthetic label boundaries — a real finding about the cost of an uncalibrated heuristic, not proof learned models are categorically better.
+The learned model wins by a wide margin here, but mostly because I never actually tuned my heuristic's thresholds against the real boundaries of my synthetic labels. That is a genuinely useful thing to have learned: an uncalibrated heuristic can lose badly to a learned model, and that is a fact about calibration, not proof that learned models are always better.
 
-### Activity recognition: baseline MLP vs. LSTM (synthetic pose-sequence data)
+### Activity recognition: a hand engineered baseline versus an LSTM
+
+Tested on synthetic pose sequence data I generated myself.
+
 | Model | Accuracy |
 |---|---|
-| Baseline (hand-engineered features + MLP) | 1.00 |
-| LSTM (raw sequence) | 1.00 |
+| Baseline, hand engineered features plus a small neural network | 1.00 |
+| LSTM, learns directly from the raw sequence | 1.00 |
 
-Honest reading: both saturate at 100% because the synthetic activity patterns were generated with cleanly separable motion signatures — this proves the training pipeline works end-to-end, not that the two approaches perform identically on real, messier data.
+Both models hit 100 percent, which taught me something I did not expect going in: my synthetic activity patterns were too cleanly separable to actually stress test the difference between the two approaches. This experiment proves my training pipeline works correctly end to end. It does not prove the two modeling approaches perform the same on real, messier data.
 
-### Anomaly detection: rule-based vs. Isolation Forest (synthetic activity data)
-| Detector | Precision | Recall | False Positives |
+### Anomaly detection: rule based versus Isolation Forest
+
+Tested on synthetic activity data I generated myself.
+
+| Detector | Precision | Recall | False positives |
 |---|---|---|---|
-| Rule-based | 1.00 | 1.00 | 0 |
+| Rule based | 1.00 | 1.00 | 0 |
 | Isolation Forest | 0.59 | 1.00 | 7 |
 
-Honest reading: rule-based wins on precision here because the synthetic anomalies were generated to match its exact thresholds. The real tradeoff this demonstrates: rules catch known patterns precisely; Isolation Forest catches unknown patterns at the cost of more false positives.
+Rule based wins on precision here mostly because I generated the synthetic anomalies to match its exact thresholds, which gave it something of a home field advantage. The real tradeoff this demonstrates is genuine though: rules catch known patterns precisely, while Isolation Forest can catch patterns nobody thought to write a rule for, at the cost of more false positives.
 
-## Core Concepts (for readers new to computer vision)
+## What I Learned, Concept by Concept
 
-Brief summary of the key ideas behind each stage:
+**Detection.** A trained neural network looks at one frame and outputs bounding boxes, each with a class label and a confidence score. That confidence score comes from a sigmoid function applied to the network's raw output. Two ideas make the raw output usable: IoU, which measures how much two boxes overlap, and non max suppression, which uses IoU to collapse a messy pile of overlapping candidate boxes down to one clean box per real object.
 
-**Detection** — a trained neural network looks at one frame and outputs bounding boxes with class labels and confidence scores (via sigmoid on raw logits). **IoU** (intersection over union) measures box overlap; **NMS** removes duplicate overlapping boxes.
+**Tracking.** Detection by itself has no memory. Every frame is evaluated completely independently, so there is no way to know if the person in frame two is the same person from frame one. Tracking fixes this by predicting where each object should be next, based on its recent motion, using a Kalman filter, and matching new detections against that prediction using IoU. I used ByteTrack specifically because it keeps low confidence detections around for a second matching pass, which helps recover a person's identity through brief occlusion, like walking behind a shelf.
 
-**Tracking** — detection has no memory across frames; tracking adds persistent IDs by predicting where each object should be next (Kalman filter) and matching new detections to that prediction via IoU. **ByteTrack** specifically recovers tracks through brief occlusion.
+**Pose estimation.** For each tracked person, I locate 17 body keypoints: nose, eyes, ears, shoulders, elbows, wrists, hips, knees, and ankles. I compute joint angles from these using basic vector math, the dot product formula for the angle between two vectors, which turns raw keypoint positions into a real geometric signal, like how bent someone's knee currently is.
 
-**Pose estimation** — 17 body keypoints (COCO format) per tracked person. **Joint angles** (via vector dot product) turn raw keypoint positions into geometric signals like "how bent is this knee."
+**Temporal activity recognition.** A single frame is genuinely ambiguous. Bent knees could mean someone is lifting something, falling, or just tying their shoe. The only way to tell these apart is to look at a window of frames, roughly the last second, and see how the position actually changed over time. I built and compared two approaches: hand engineered summary features fed into a small neural network, and an LSTM that learns directly from the raw sequence and carries its own internal memory forward frame by frame.
 
-**Temporal activity recognition** — a single frame is ambiguous (bent knees could mean lifting, falling, or tying a shoe); a 20-frame window resolves it. Compares hand-engineered summary features + MLP against a raw-sequence LSTM.
+**Spatial reasoning.** I define named zones as polygons in pixel coordinates, and check whether a tracked object's position falls inside one using ray casting, a classic, exactly solvable geometry algorithm. No machine learning involved here at all, because this particular question does not need it.
 
-**Spatial reasoning** — named zones as polygons; point-in-polygon via ray casting, no ML involved.
+**Risk prediction.** I combine distance, closing speed, and time to collision, which estimates how many seconds until two objects would meet if they kept their current velocity, into a single risk score. I built this two different ways on purpose: a hand written, fully interpretable formula, and a gradient boosted trees model trained on labeled examples, specifically so I could compare an interpretable approach against a learned one honestly.
 
-**Risk prediction** — distance, closing speed, and **time-to-collision** (TTC) combined into a score, two ways: hand-written heuristic and gradient-boosted trees learned from labeled examples.
-
-**Anomaly detection** — hand-written rules, or an unsupervised **Isolation Forest** trained only on examples of normal behavior.
+**Anomaly detection.** This catches statistically unusual activity that my risk model was never explicitly designed to catch. I built this two ways as well: hand written rules, and an unsupervised Isolation Forest that trains only on examples of normal behavior and flags outliers based on how easily they can be statistically isolated from everything else.
 
 ## Limitations
 
-- **Fine-tuned forklift detection is not yet reliable** — real class-imbalance issue, diagnosed and understood, fix identified but not yet re-validated (see Results above).
-- **Risk, activity recognition, and anomaly detection are trained/evaluated on synthetic placeholder data** — proves the pipelines are correctly wired end-to-end, not real-world accuracy claims. Every module's docstring states this explicitly.
-- **Monocular camera limitation** — all distance/velocity figures are in pixel units from a single 2D view, not real-world meters. Real-world distance requires camera calibration, not yet implemented.
-- **No backend/streaming infrastructure** — Kafka, Go, Redis, PostgreSQL are deliberately out of scope for this phase; this project is scoped to demonstrate perception depth specifically.
+I want to be direct about exactly where this project currently stands.
 
-## Roadmap
+- My fine tuned forklift detection is not reliable yet. I have a real, diagnosed class imbalance problem and a fix identified, but I have not re run training with that fix.
+- My risk prediction, activity recognition, and anomaly detection modules are all trained and evaluated on synthetic data that I generated myself, not real labeled data. Every module says this explicitly in its own code. These experiments prove my pipelines are correctly built end to end. They do not yet prove real world accuracy.
+- This entire system currently uses a single 2D camera with no depth information. All of my distance and velocity numbers are in pixel units, not real world meters. Converting to real world distance would require camera calibration, which I have not implemented.
+- I deliberately did not build the production backend, streaming, or database infrastructure for this phase. I chose to put my time into the perception layer specifically.
 
-**Done:** detection (pretrained + first real fine-tuning pass), tracking, pose, temporal activity recognition, spatial zones, risk prediction (heuristic + learned), anomaly detection (rule-based + ML), lightweight real-data fine-tuning pipeline (LOCO).
+## What Is Next
 
-**Next:**
-1. Re-run LOCO fine-tuning with class-balanced sampling, validate forklift detection numbers are meaningful.
-2. Replace synthetic risk/activity/anomaly training data with real labeled/logged data, re-run all experiments.
-3. Edge inference optimization (ONNX/TensorRT comparison), Docker/Kubernetes deployment, monitoring dashboard.
-4. Event engine, Kafka streaming, Go backend, Redis, PostgreSQL.
+1. Re run fine tuning with my class balanced sampling fix, and confirm forklift detection numbers are actually meaningful.
+2. Replace every synthetic dataset in this project with real labeled or logged data, and re run every experiment.
+3. Look into edge inference optimization, comparing PyTorch against ONNX Runtime and TensorRT, and containerize the system with Docker.
+4. Build the event streaming and backend layer I deliberately left out of this phase.
