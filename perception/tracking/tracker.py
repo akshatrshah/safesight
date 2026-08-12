@@ -1,40 +1,4 @@
-"""
-Multi-object tracking: turns per-frame detections into persistent
-identities with a position history over time.
-
-WHY THIS SITS ON TOP OF DETECTION, NOT INSIDE IT
-----------------------------------------------------
-Detection (perception/detection/detector.py) answers "what's in this
-frame" with zero memory of any other frame. Tracking answers "which
-object is this, across many frames" by matching new detections to
-existing tracks. We use Ultralytics' built-in `.track()` method, which
-runs the same YOLO detector under the hood and then applies ByteTrack
-(a tracking-by-detection algorithm) to assign persistent IDs.
-
-WHAT BYTETRACK ACTUALLY DOES (practical level)
---------------------------------------------------
-For each new frame:
-  1. Predict where each existing track SHOULD be, based on its recent
-     motion (this prediction step uses a Kalman filter internally).
-  2. Compare that prediction against the new frame's actual detections
-     using IoU — the closest match gets matched to that track ID.
-  3. Unmatched new detections start new tracks. Unmatched existing
-     tracks that go too long without a match are dropped.
-ByteTrack's specific contribution: it does this matching in TWO passes —
-high-confidence detections first, then a second pass using LOW-confidence
-detections that would normally be thrown away. This helps recover tracks
-during brief occlusion (e.g. a worker briefly blocked by a forklift),
-where the detector often still produces a low-confidence box rather than
-no box at all.
-
-WHY WE ALSO KEEP OUR OWN TrackHistory
------------------------------------------
-Ultralytics gives us an ID per frame, but for computing velocity,
-trajectory, and time-to-collision (used by perception/risk/risk_model.py)
-we need each track's recent POSITION HISTORY, not just its current
-position. TrackHistory is a small in-memory store we maintain ourselves
-for exactly that purpose.
-"""
+"""ByteTrack wrapper, plus my own position history so I can compute velocity for the risk model."""
 
 from __future__ import annotations
 
@@ -47,8 +11,6 @@ from ultralytics import YOLO
 
 @dataclass
 class TrackedDetection:
-    """One tracked object's state in the CURRENT frame."""
-
     track_id: int
     class_name: str
     confidence: float
@@ -58,18 +20,12 @@ class TrackedDetection:
 
 @dataclass
 class TrackSnapshot:
-    """One historical (position, time) sample for a single track."""
-
     position: tuple[float, float]
     timestamp: float
 
 
 class TrackHistory:
-    """
-    Keeps a rolling window of recent (position, timestamp) samples per
-    track ID. This is the "memory" that turns single-point positions
-    into a usable trajectory.
-    """
+    """Rolling window of recent (position, timestamp) samples per track ID."""
 
     def __init__(self, max_history: int = 30) -> None:
         self.max_history = max_history
@@ -86,10 +42,7 @@ class TrackHistory:
         return list(self._tracks.get(track_id, []))
 
     def velocity(self, track_id: int) -> tuple[float, float] | None:
-        """
-        Estimate current (vx, vy) in pixels/second from the two most
-        recent samples. Returns None if there isn't enough history yet.
-        """
+        """Pixels/second from the two most recent samples. None if there's not enough history yet."""
         history = self._tracks.get(track_id)
         if history is None or len(history) < 2:
             return None
@@ -107,18 +60,13 @@ class TrackHistory:
         return list(self._tracks.keys())
 
     def prune(self, active_ids: set[int]) -> None:
-        """Drop history for tracks that are no longer being tracked."""
         for track_id in list(self._tracks.keys()):
             if track_id not in active_ids:
                 del self._tracks[track_id]
 
 
 class Tracker:
-    """
-    Wraps Ultralytics' YOLO + ByteTrack. Call `update(frame)` once per
-    video frame, in order — track IDs only stay consistent if frames are
-    fed in sequence (this is stateful, unlike Detector.detect()).
-    """
+    """Call update() once per frame, in order, IDs only stay consistent if frames come in sequence."""
 
     def __init__(
         self,
@@ -137,7 +85,7 @@ class Tracker:
         results = self.model.track(
             source=frame,
             conf=self.confidence_threshold,
-            persist=True,          # keep ID assignment state between calls
+            persist=True,
             tracker="bytetrack.yaml",
             verbose=False,
         )
@@ -147,8 +95,6 @@ class Tracker:
         active_ids: set[int] = set()
 
         if result.boxes is None or result.boxes.id is None:
-            # No tracks yet this frame (e.g. nothing detected, or IDs not
-            # assigned on the very first frame in rare cases).
             return tracked
 
         for box in result.boxes:

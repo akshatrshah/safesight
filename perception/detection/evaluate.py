@@ -1,43 +1,4 @@
-"""
-Evaluation harness: real precision / recall / mAP@50 / mAP@50:95, not a
-visual "it looks like it works" check.
-
-WHAT THESE METRICS MEAN (practical level)
---------------------------------------------
-- Precision: of all the boxes the model predicted, what fraction were
-  correct? Low precision = lots of false alarms.
-- Recall: of all the real objects that existed, what fraction did the
-  model find? Low recall = the model is missing real hazards — the
-  worse failure mode for a safety system.
-- mAP@50: "mean Average Precision" using IoU >= 0.5 to count a prediction
-  as correct. A fairly forgiving threshold — a box that's roughly in the
-  right place counts as a hit.
-- mAP@50:95: the SAME idea, but averaged across IoU thresholds from 0.5
-  to 0.95 in steps of 0.05. This punishes loosely-fitted boxes much more
-  and is the standard, harder metric reported in most CV papers. Always
-  report both — a model can have a high mAP@50 and a much lower
-  mAP@50:95 if its boxes are roughly-but-not-precisely placed.
-
-WHY WE USE ULTRALYTICS' BUILT-IN val(), NOT OUR OWN IMPLEMENTATION
-----------------------------------------------------------------------
-We hand-rolled IoU/NMS in perception/utils/geometry.py purely so you
-understand the mechanism. Computing mAP correctly (matching predictions
-to ground truth across all classes and IoU thresholds, handling
-duplicate matches, etc.) has enough edge cases that re-implementing it
-is a distraction from the actual learning goal of this milestone. We use
-Ultralytics' validated implementation here, the same way you'd use a
-well-tested library function in backend work rather than re-writing your
-own JSON parser.
-
-DATASET NOTE
---------------
-This first pass evaluates on Ultralytics' small built-in COCO8 sample
-dataset (8 images, COCO-format labels, auto-downloaded) purely to prove
-the evaluation harness itself is wired correctly end-to-end. This is a
-placeholder, not a warehouse dataset — Milestone 2 swaps in a real
-labeled warehouse/forklift set. Say so explicitly in any report; never
-present COCO8 numbers as if they reflect warehouse performance.
-"""
+"""Real precision/recall/mAP evaluation using Ultralytics' own validated implementation, not a hand-rolled one."""
 
 from __future__ import annotations
 
@@ -57,19 +18,14 @@ def load_config(config_path: Path) -> dict:
 
 
 def evaluate(model_name: str, data_yaml: str) -> dict:
-    """
-    Run Ultralytics' validation pipeline and pull out the metrics we care
-    about. `data_yaml` is any Ultralytics-format dataset config
-    ("coco8.yaml" ships with the library and auto-downloads).
-    """
     model = YOLO(model_name)
     metrics = model.val(data=data_yaml, verbose=False)
 
     return {
         "model_name": model_name,
         "dataset": data_yaml,
-        "precision": round(float(metrics.box.mp), 4),   # mean precision across classes
-        "recall": round(float(metrics.box.mr), 4),       # mean recall across classes
+        "precision": round(float(metrics.box.mp), 4),
+        "recall": round(float(metrics.box.mr), 4),
         "map50": round(float(metrics.box.map50), 4),
         "map50_95": round(float(metrics.box.map), 4),
     }

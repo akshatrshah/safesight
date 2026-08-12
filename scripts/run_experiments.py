@@ -1,17 +1,4 @@
-"""
-Runs the three "compare two modeling approaches" experiments defined
-across the perception modules, and saves all results to one file.
-
-This is the single script to run for Milestone 5 / 8's research
-questions: heuristic vs learned risk, baseline vs LSTM activity
-recognition, rule-based vs ML-based anomaly detection.
-
-All datasets used here are SYNTHETIC placeholders — see the docstring
-in each module (perception/risk/risk_model.py,
-perception/temporal/activity_recognition.py,
-perception/anomaly/anomaly_detector.py) for why, and swap in real
-labeled data before treating these numbers as real-world claims.
-"""
+"""Runs all three model-comparison experiments and saves the results in one place."""
 
 from __future__ import annotations
 

@@ -1,18 +1,4 @@
-"""
-Benchmark inference latency and FPS across the model sizes listed in
-configs/detection.yaml -> benchmark.models_to_compare.
-
-WHY THIS SCRIPT EXISTS
--------------------------
-Your project spec (and any real perception role) requires reporting
-accuracy AND latency together, never accuracy alone — a highly accurate
-model that runs at 2 FPS is often useless for a real-time safety system.
-This script produces the numbers for that comparison. Every number here
-is measured on your actual hardware, not estimated.
-
-Usage:
-    python scripts/benchmark_latency.py --source path/to/sample_images
-"""
+"""Measures real latency/FPS per model size on my own hardware. Accuracy alone isn't enough for a safety system."""
 
 from __future__ import annotations
 
@@ -23,7 +9,7 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))  # so `perception` is importable without setting PYTHONPATH
+sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 import yaml
@@ -46,8 +32,7 @@ def benchmark_model(model_name: str, config: dict, image) -> dict:
     warmup = config["benchmark"]["num_warmup_frames"]
     timed = config["benchmark"]["num_timed_frames"]
 
-    # Warmup: first few inference calls are slower (lazy CUDA init, etc.)
-    # and would distort the average if included.
+    # first few calls are slower (lazy init etc), so I warm up before timing
     for _ in range(warmup):
         detector.detect(image)
 

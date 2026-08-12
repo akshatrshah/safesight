@@ -1,12 +1,4 @@
-"""
-Run the detector on a folder of images or a video file and save annotated
-output. This is the "does it actually work, visually" sanity check —
-NOT the evaluation harness (that's evaluate.py, which produces real
-precision/recall/mAP numbers).
-
-Usage:
-    python scripts/run_detection.py --source path/to/images_or_video --out output_dir
-"""
+"""Runs the detector on a folder of images and saves annotated output. My visual sanity check, not the real eval."""
 
 from __future__ import annotations
 
@@ -15,7 +7,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))  # so `perception` is importable without setting PYTHONPATH
+sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 import yaml
@@ -29,7 +21,6 @@ def load_config(config_path: Path) -> dict:
 
 
 def draw_detections(image, frame_detections) -> None:
-    """Draw boxes + labels directly onto `image` (in place)."""
     for det in frame_detections.detections:
         x1, y1, x2, y2 = (int(v) for v in det.box_xyxy)
         label = f"{det.class_name} {det.confidence:.2f}"

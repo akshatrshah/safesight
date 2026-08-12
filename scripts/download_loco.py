@@ -1,39 +1,21 @@
-"""
-Download a SUBSET of the LOCO (Logistics Objects in Context) dataset.
+"""Downloads a small sample of the real LOCO warehouse dataset instead of the whole multi-GB archive.
 
-LOCO is a real, published, public-domain dataset built by the Technical
-University of Munich specifically for logistics object detection —
-forklifts, pallets, pallet trucks, small load carriers, stillages —
-collected across 5 distinct real warehouse environments.
-Citation: Mayershofer, C., Holm, D.-M., Molter, B., Fottner, J.
+LOCO (Logistics Objects in Context) is a public domain dataset from the Technical
+University of Munich: forklifts, pallets, pallet trucks, small load carriers, and
+stillages, across 5 real warehouse environments.
+Citation: Mayershofer, C., Holm, D.-M., Molter, B., Fottner, J.,
 "LOCO: Logistics Objects in Context", IEEE ICMLA 2020.
-License: public domain (CC0-equivalent) — see the repo's LICENSE file.
 
-WHY THIS DOWNLOADS A SUBSET, NOT THE WHOLE ARCHIVE
---------------------------------------------------------
-The full annotated-image set is several GB — too much for a lightweight
-laptop to download and store just for a first fine-tuning pass. Instead
-of downloading the whole zip, this script uses `remotezip` to read
-SPECIFIC FILES directly out of the remote zip archive over HTTP Range
-requests — the same technique tools like `aws s3 cp --range` use. Only
-the bytes for the images you actually ask for get transferred, plus a
-tiny read of the zip's central directory (a KB-scale index of what's in
-the archive) — not the whole multi-GB file.
+I use remotezip to read specific files straight out of the remote archive over
+HTTP range requests, so I only pull the bytes I actually need instead of the
+whole multi-GB zip, that's what keeps this workable on a lightweight laptop.
 
-`--images-per-subset N` controls how many images get pulled from EACH
-of the 5 warehouse subsets (so you get variety across environments, not
-just a chunk of one warehouse). Default is a small number suited to a
-lightweight first pass — increase it later once you've confirmed the
-pipeline works end-to-end.
+--images-per-subset controls how many images I pull from EACH of the 5 warehouse
+subsets, so I get variety across environments instead of one lopsided chunk.
 
-FALLBACK
-------------
-If the remote server doesn't support Range requests for some reason
-(rare for a standard file host, but possible), `remotezip` will raise a
-clear error rather than silently downloading everything. In that case,
-fall back to downloading the full zip manually from the link in
-https://github.com/tum-fml/loco and extracting only the images you need
-yourself.
+I prioritize images containing forklift by default, since that's the rarest
+class in the dataset (598 of 151,428 annotations) and random sampling alone
+barely picks any up.
 """
 
 from __future__ import annotations
@@ -57,9 +39,8 @@ ANNOTATION_FILES = [
     "loco-sub4-v1-val.json",
     "loco-sub5-v1-train.json",
 ]
-SUBSET_FILES = ANNOTATION_FILES[1:]  # exclude the combined "all" file
+SUBSET_FILES = ANNOTATION_FILES[1:]
 
-# Official annotated-images download, linked from https://github.com/tum-fml/loco
 IMAGES_ZIP_URL = "https://go.mytum.de/239870"
 
 
@@ -76,30 +57,48 @@ def download_annotations(out_dir: Path) -> None:
     print(f"Annotations saved to {out_dir}")
 
 
-def pick_sample_filenames(annotations_dir: Path, subset_file: str, n: int, seed: int) -> list[str]:
+def pick_sample_filenames(annotations_dir: Path, subset_file: str, n: int, seed: int, prioritize_class: str | None = "forklift") -> list[str]:
     with open(annotations_dir / subset_file) as f:
         data = json.load(f)
+
     all_filenames = [img["file_name"] for img in data["images"]]
     rng = random.Random(seed)
-    return rng.sample(all_filenames, min(n, len(all_filenames)))
+
+    if prioritize_class is None:
+        return rng.sample(all_filenames, min(n, len(all_filenames)))
+
+    cat_names = {c["id"]: c["name"] for c in data["categories"]}
+    image_id_to_filename = {img["id"]: img["file_name"] for img in data["images"]}
+    priority_filenames = sorted(set(
+        image_id_to_filename[ann["image_id"]]
+        for ann in data["annotations"]
+        if cat_names.get(ann["category_id"]) == prioritize_class
+    ))
+
+    if len(priority_filenames) >= n:
+        return rng.sample(priority_filenames, n)
+
+    remaining_budget = n - len(priority_filenames)
+    remaining_pool = [f for f in all_filenames if f not in set(priority_filenames)]
+    fill = rng.sample(remaining_pool, min(remaining_budget, len(remaining_pool)))
+
+    return priority_filenames + fill
 
 
-def download_image_subset(annotations_dir: Path, out_images_dir: Path, images_per_subset: int, seed: int) -> None:
+def download_image_subset(annotations_dir: Path, out_images_dir: Path, images_per_subset: int, seed: int, prioritize_class: str | None) -> None:
     out_images_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Connecting to remote archive to read its file index (this reads only the archive's "
-          f"central directory, not the full multi-GB file)...")
+    print("Connecting to the remote archive to read its file index (just the central directory, not the whole zip)...")
     with RemoteZip(IMAGES_ZIP_URL) as zf:
         all_zip_names = zf.namelist()
-        # Build basename -> full-path-in-zip index, since the zip's internal
-        # folder structure may not exactly match the "file_name" field alone.
         basename_index = {Path(n).name: n for n in all_zip_names if n.lower().endswith(".jpg")}
         print(f"  archive contains {len(basename_index)} image files total")
 
         total_fetched = 0
         for subset_file in SUBSET_FILES:
-            sample_names = pick_sample_filenames(annotations_dir, subset_file, images_per_subset, seed)
-            print(f"\n{subset_file}: sampling {len(sample_names)} images...")
+            sample_names = pick_sample_filenames(annotations_dir, subset_file, images_per_subset, seed, prioritize_class)
+            print(f"\n{subset_file}: sampling {len(sample_names)} images"
+                  f"{f' (prioritizing images with {prioritize_class})' if prioritize_class else ''}...")
 
             for fname in sample_names:
                 zip_path = basename_index.get(fname)
@@ -111,7 +110,7 @@ def download_image_subset(annotations_dir: Path, out_images_dir: Path, images_pe
                 if dest.exists():
                     continue
 
-                data = zf.read(zip_path)   # fetches ONLY this file's bytes via a range request
+                data = zf.read(zip_path)
                 dest.write_bytes(data)
                 total_fetched += 1
 
@@ -121,16 +120,15 @@ def download_image_subset(annotations_dir: Path, out_images_dir: Path, images_pe
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "datasets" / "loco_raw")
-    parser.add_argument("--images-per-subset", type=int, default=150,
-                         help="How many images to sample from EACH of the 5 warehouse subsets (default: 150, ~750 total)")
+    parser.add_argument("--images-per-subset", type=int, default=150)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    print("=== Downloading LOCO annotations (small — from GitHub) ===")
+    print("=== Downloading LOCO annotations (small, from GitHub) ===")
     download_annotations(args.out / "annotations")
 
-    print(f"\n=== Downloading a {args.images_per_subset}-per-subset image SAMPLE (not the full archive) ===")
-    download_image_subset(args.out / "annotations", args.out / "images", args.images_per_subset, args.seed)
+    print(f"\n=== Downloading a {args.images_per_subset}-per-subset image sample (not the full archive) ===")
+    download_image_subset(args.out / "annotations", args.out / "images", args.images_per_subset, args.seed, prioritize_class="forklift")
 
     print(f"\nDone. Raw LOCO subset is in {args.out}")
     print("Next: python scripts/convert_loco_to_yolo.py")

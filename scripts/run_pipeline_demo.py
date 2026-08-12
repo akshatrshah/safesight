@@ -1,18 +1,5 @@
-"""
-End-to-end integration demo: tracking -> pose -> zone check -> risk
-scoring, all wired together on real detections from a real image.
-
-IMPORTANT HONESTY NOTE
----------------------------
-We do not yet have a fine-tuned forklift detector (that's Milestone 2 —
-"forklift" isn't a native COCO class). So this demo uses two tracked
-PEOPLE as a stand-in for a "worker" and a "vehicle" purely to prove the
-pipeline wiring works end-to-end — position -> velocity -> zone
-membership -> interaction risk score. This is explicitly a plumbing
-demo, not a claim that the system currently detects real forklift
-hazards. Milestone 2's fine-tuned detector is what would make the
-"vehicle" role real instead of a stand-in.
-"""
+"""Wires tracking, pose, zones, and risk together end to end. Two tracked people stand in for worker+vehicle
+until I have a real fine-tuned forklift detector, that's a wiring demo, not a real hazard claim."""
 
 from __future__ import annotations
 
@@ -22,7 +9,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))  # so `perception` is importable without setting PYTHONPATH
+sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 import yaml
@@ -50,20 +37,16 @@ def main() -> None:
     if frame is None:
         raise FileNotFoundError(f"Could not read image at {args.source}")
 
-    # --- Tracking (feed the same frame 3x to build up velocity history —
-    # a real video would feed genuinely consecutive frames here) ---
     tracker = Tracker(model_name=config["model_name"], target_classes=["person"], confidence_threshold=config["confidence_threshold"])
     for i in range(3):
         tracked = tracker.update(frame, timestamp=float(i))
 
     print(f"Tracked {len(tracked)} people: ids={[t.track_id for t in tracked]}")
 
-    # --- Pose estimation, per tracked person ---
     pose_estimator = PoseEstimator(confidence_threshold=config["confidence_threshold"])
     poses = pose_estimator.estimate(frame)
     print(f"Estimated pose for {len(poses)} people")
 
-    # --- Zone check: an illustrative "restricted area" covering the left third of the frame ---
     frame_height, frame_width = frame.shape[:2]
     restricted_zone = Zone(
         name="restricted_area",
@@ -79,8 +62,6 @@ def main() -> None:
             print(f"  track {t.track_id} is inside zone(s): {zones}")
         events.append({"track_id": t.track_id, "center": t.center, "zones": zones})
 
-    # --- Risk: pairwise between every 2 tracked people, one stand-in as "vehicle" ---
-    # (See module docstring — this is a wiring demo, not a real forklift risk claim.)
     risk_model = HeuristicRiskModel()
     risk_events = []
     if len(tracked) >= 2:

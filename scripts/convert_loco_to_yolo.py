@@ -1,29 +1,12 @@
-"""
-Convert LOCO's COCO-format annotations into the YOLOv8 format
-`finetune_detector.py` expects (per-image .txt label files + data.yaml).
+"""Converts LOCO's COCO-format annotations into the YOLO format finetune_detector.py expects.
 
-WHY WE USE LOCO'S OWN TRAIN/VAL SPLIT, NOT A RANDOM ONE
---------------------------------------------------------------
-LOCO ships 5 separate subsets (sub1-sub5), each recorded in a DIFFERENT
-real warehouse / recording session. The dataset authors already
-designated sub2, sub3, sub5 as train and sub1, sub4 as val. This is
-exactly the right way to split: by session/environment, not by
-individual frame — using a random frame-level split here would let
-near-duplicate frames from the same short recording end up in both
-train and val, leaking information and inflating validation metrics
-artificially (the same data-leakage issue covered in FOUNDATIONS.md).
-We use the authors' split as-is rather than re-splitting ourselves.
+I use LOCO's own train/val split (sub2, sub3, sub5 = train, sub1, sub4 = val)
+rather than a random split, since each subset is a different real warehouse
+session. A random frame-level split would let near-duplicate frames leak
+between train and val and inflate the metrics.
 
-COCO BBOX FORMAT -> YOLO BBOX FORMAT
-------------------------------------------
-COCO format:  [x_top_left, y_top_left, width, height]   (absolute pixels)
-YOLO format:  [x_center, y_center, width, height]        (all normalized 0-1)
-
-Conversion:
-    x_center = (x_top_left + width / 2) / image_width
-    y_center = (y_top_left + height / 2) / image_height
-    norm_width = width / image_width
-    norm_height = height / image_height
+COCO boxes are [x_top_left, y_top_left, width, height] in absolute pixels.
+YOLO boxes are [x_center, y_center, width, height], all normalized 0-1.
 """
 
 from __future__ import annotations
@@ -48,7 +31,6 @@ def coco_bbox_to_yolo(bbox: list[float], img_width: int, img_height: int) -> tup
 
 
 def find_image_file(file_name: str, search_root: Path, index: dict[str, Path]) -> Path | None:
-    """Look up an image by filename in a prebuilt index (built once via os.walk, not re-searched per file)."""
     return index.get(file_name)
 
 
@@ -79,7 +61,6 @@ def convert_subset(
         with open(annotations_dir / ann_file) as f:
             data = json.load(f)
 
-        # Group annotations by image_id for fast lookup.
         anns_by_image: dict[int, list[dict]] = {}
         for ann in data["annotations"]:
             anns_by_image.setdefault(ann["image_id"], []).append(ann)
@@ -112,26 +93,23 @@ def convert_subset(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw", type=Path, default=REPO_ROOT / "datasets" / "loco_raw",
-                         help="Directory produced by download_loco.py")
-    parser.add_argument("--out", type=Path, default=REPO_ROOT / "datasets" / "loco_yolo",
-                         help="Output directory in YOLOv8 format")
+    parser.add_argument("--raw", type=Path, default=REPO_ROOT / "datasets" / "loco_raw")
+    parser.add_argument("--out", type=Path, default=REPO_ROOT / "datasets" / "loco_yolo")
     args = parser.parse_args()
 
     annotations_dir = args.raw / "annotations"
     images_search_root = args.raw / "images"
 
     if not annotations_dir.exists():
-        raise FileNotFoundError(f"Annotations not found at {annotations_dir} — run scripts/download_loco.py first")
+        raise FileNotFoundError(f"Annotations not found at {annotations_dir}, run download_loco.py first")
 
-    # Load the full annotation file just to get the category list (consistent across all subsets).
     with open(annotations_dir / "loco-all-v1.json") as f:
         all_data = json.load(f)
 
     categories = sorted(all_data["categories"], key=lambda c: c["id"])
     category_id_to_yolo_id = {c["id"]: i for i, c in enumerate(categories)}
     class_names = [c["name"] for c in categories]
-    print(f"Classes (COCO id -> YOLO id -> name): "
+    print("Classes (COCO id -> YOLO id -> name): "
           + ", ".join(f"{cid}->{yid}:{name}" for cid, (yid, name) in
                        zip(category_id_to_yolo_id.keys(), zip(category_id_to_yolo_id.values(), class_names))))
 
@@ -161,8 +139,8 @@ def main() -> None:
     print(f"\nWrote {data_yaml}")
 
     if train_missing or val_missing:
-        print(f"\nWARNING: {train_missing + val_missing} images referenced in annotations were not found "
-              f"under {images_search_root}. Check that download_loco.py's image download/extraction completed fully.")
+        print(f"\n{train_missing + val_missing} images referenced in annotations weren't found under "
+              f"{images_search_root}, check that download_loco.py finished fully.")
 
     print(f"\nDone. Fine-tune with:\n  python scripts/finetune_detector.py --data {data_yaml} --epochs 50")
 
