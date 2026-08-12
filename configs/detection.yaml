@@ -1,16 +1,15 @@
-# Configuration for the detection module.
-# Nothing here should be hard-coded in Python — scripts read this file.
+# Nothing here should be hard-coded in Python, scripts read this file.
 
-model_name: "yolov8n.pt"   # try "yolov8m.pt" for the accuracy/latency comparison
+# Real fine-tuned weights, forklift + pallet, trained on the LOCO subset.
+# Base pretrained yolov8n.pt is still used below, in the benchmark section,
+# for the model-size latency comparison, that's a separate, deliberate use.
+model_name: "runs/detect/train-2/weights/best.pt"
 
 confidence_threshold: 0.35
 
-# COCO pretrained classes that overlap with warehouse targets.
-# "forklift" is NOT a native COCO class — until we fine-tune on a
-# forklift dataset, "truck" is the closest proxy class for evaluation.
 target_classes:
-  - person
-  - truck
+  - forklift
+  - pallet
 
 benchmark:
   models_to_compare:
