@@ -1,11 +1,9 @@
-"""Downloads the full LOCO archive once (single sequential connection), then locally
-selects only pallet and forklift images, capped at a target count, for a fast POC."""
+"""Downloads the full LOCO archive once (single sequential connection), more reliable than
+many small parallel requests. Extracts locally afterward, which is pure disk work, no network."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 import time
 import zipfile
 from pathlib import Path
@@ -25,6 +23,7 @@ ANNOTATION_FILES = [
 IMAGES_ZIP_URL = "https://go.mytum.de/239870"
 
 _last_percent = [-1]
+
 
 def _progress(block_num, block_size, total_size):
     if total_size <= 0:
@@ -53,7 +52,7 @@ def main() -> None:
 
     zip_path = args.out / "loco_images.zip"
     if not zip_path.exists():
-        print("\n=== Downloading full images archive, ONE connection, this is the slow-but-reliable step ===")
+        print("\n=== Downloading full images archive, ONE connection ===")
         start = time.time()
         urlretrieve(IMAGES_ZIP_URL, zip_path, reporthook=_progress)
         print(f"Downloaded in {time.time()-start:.0f}s")

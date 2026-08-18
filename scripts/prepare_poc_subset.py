@@ -1,7 +1,4 @@
-"""Filters the already-downloaded LOCO data down to pallet + forklift only,
-capped near 1000 images, forklift-containing images guaranteed included
-first since it's the rare class. Converts straight to YOLO format.
-Builds a filename index first since images sit in deeply nested subfolders."""
+"""Filters the full LOCO archive down to forklift and pallet only, forklift-priority sampled."""
 
 from __future__ import annotations
 
@@ -24,7 +21,7 @@ def coco_bbox_to_yolo(bbox, img_w, img_h):
 
 
 def build_filename_index(images_root: Path) -> dict[str, Path]:
-    print(f"Indexing images under {images_root} (one-time scan, nested folders)...")
+    print(f"Indexing images under {images_root} (one-time scan)...")
     index = {}
     for path in images_root.rglob("*.jpg"):
         index[path.name] = path
@@ -107,7 +104,7 @@ def main():
     data_yaml = args.out / "data.yaml"
     data_yaml.write_text("train: train/images\nval: valid/images\nnc: 2\nnames: ['forklift', 'pallet']\n")
     print(f"\nWrote {data_yaml}")
-    print(f"Train with:\n  python scripts/finetune_detector.py --data {data_yaml} --epochs 40 --imgsz 640")
+    print(f"Train with:\n  python scripts/finetune_detector.py --data {data_yaml} --epochs 40")
 
 
 if __name__ == "__main__":
