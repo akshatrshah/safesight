@@ -3,7 +3,7 @@
 # Real fine-tuned weights, forklift + pallet, trained on the LOCO subset.
 # Base pretrained yolov8n.pt is still used below, in the benchmark section,
 # for the model-size latency comparison, that's a separate, deliberate use.
-model_name: "runs/detect/train-2/weights/best.pt"
+model_name: "runs/detect/train-6/weights/best.pt"
 
 confidence_threshold: 0.35
 

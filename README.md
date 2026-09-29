@@ -32,7 +32,8 @@ Each stage was built and tested independently before wiring them together.
 | Spatial reasoning, zones | Implemented |
 | Risk prediction | Implemented, heuristic and learned models, synthetic training data |
 | Anomaly detection | Implemented, rule based and Isolation Forest, synthetic training data |
-| Event streaming, backend, database | Out of scope this phase, deliberately, to focus time on perception |
+| Backend API, database, live event streaming | Implemented. FastAPI + SQLite, job queue, Server-Sent Events. See Backend and Dashboard. |
+| Dashboard | Implemented. Streamlit client of the backend API. |
 
 ## Setup
 
@@ -65,7 +66,15 @@ safesight/
 │   ├── download_loco_full.py            Downloads the LOCO dataset archive
 │   ├── prepare_poc_subset.py             Filters to forklift + pallet, what I used for real results
 │   └── finetune_detector.py               Fine tunes the detector on real labeled data
-├── tests/                                   42 tests across every module
+├── backend/
+│   ├── main.py                             FastAPI app: upload, jobs, timeline, alerts, SSE streams
+│   ├── worker.py                            Background job runner around VideoProcessor
+│   ├── db.py                                 SQLite storage: jobs, per-frame stats, interaction events
+│   ├── events.py                              In-process event bus feeding the live streams
+│   └── config.py                               Settings, all overridable by environment variable
+├── dashboard/app.py                            Streamlit dashboard, talks to the backend over HTTP
+├── app.py                                       Original standalone Streamlit page (runs the pipeline inline, no backend)
+├── tests/                                   Tests across every module, including the backend
 ├── configs/detection.yaml                     Thresholds, target classes, model choice
 └── sample_data/                                 Sample image for smoke testing
 ```
@@ -85,6 +94,31 @@ python scripts/finetune_detector.py --data datasets/loco_poc/data.yaml --epochs 
 ```
 
 `download_loco_full.py` pulls the full LOCO archive (Technical University of Munich, public domain, ~770MB) in one connection. `prepare_poc_subset.py` filters to forklift and pallet only, guaranteeing forklift images get included first since it's the rare class. Add `--device mps` (Apple Silicon) or `--device 0` (NVIDIA) to the fine-tuning command for GPU training.
+
+## Backend and Dashboard
+
+The backend turns the pipeline from a script into a service. You upload a video, it queues a job, one background worker runs the real pipeline, and everything lands in SQLite: job status, per-frame risk and object counts, and every person-vehicle interaction. While a job runs, per-frame progress and MEDIUM/HIGH risk alerts stream out over Server-Sent Events.
+
+```bash
+uvicorn backend.main:create_app --factory --port 8000    # API, docs at http://localhost:8000/docs
+streamlit run dashboard/app.py                            # dashboard, in a second terminal
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/jobs` | Upload a video (multipart: `file`, `frame_skip`, `max_frames`, `use_vehicle_model`), returns 202 and the queued job |
+| `GET /api/jobs`, `GET /api/jobs/{id}` | List jobs, or one job with progress, summary, and detection breakdown |
+| `GET /api/jobs/{id}/timeline` | Per-frame max risk and object counts |
+| `GET /api/jobs/{id}/events?min_risk=` | Stored person-vehicle interactions |
+| `GET /api/jobs/{id}/video` | Annotated output video |
+| `GET /api/jobs/{id}/stream` | Live SSE: `frame`, `alert`, then `job_done` or `job_failed` |
+| `GET /api/alerts?min_risk=` | MEDIUM/HIGH interactions across all jobs |
+| `GET /api/stream` | Live SSE of every event from every job |
+| `GET /api/stats`, `GET /api/health`, `DELETE /api/jobs/{id}` | Overview counts, liveness, cleanup |
+
+Configuration, all environment variables: `SAFESIGHT_DATA_DIR` (default `outputs/backend`), `SAFESIGHT_PERSON_MODEL`, `SAFESIGHT_VEHICLE_MODEL` (path to the fine tuned weights, defaults to `model_name` in `configs/detection.yaml`), `SAFESIGHT_CONFIDENCE`, `SAFESIGHT_MAX_UPLOAD_MB`, and `SAFESIGHT_API_URL` for the dashboard.
+
+Design choices worth knowing: jobs run one at a time because the models are memory and compute heavy, a fresh processor is built per job so tracker state never leaks between videos, and jobs left `running` by a crashed server are marked failed on the next startup instead of hanging forever. Backend tests use a scripted fake processor so they don't need any model weights.
 
 ## Results
 
@@ -141,7 +175,8 @@ Rule based wins on precision mostly because I generated the synthetic anomalies 
 - My fine tuned model alone only detects forklift and pallet, since fine tuning on those two classes replaced the original detection head. I fixed this by running it alongside the pretrained person detector in a merged multi model tracker, confirmed working on real photos with both people and a forklift present, correctly tracked, zoned, and risk scored. Not yet tested on real video with genuine motion, only on repeated still frames, so time to collision hasn't been exercised with real velocity yet.
 - Risk prediction, activity recognition, and anomaly detection are trained and evaluated on synthetic data I generated myself, not real labeled data. This proves the pipelines are correctly built end to end, not real-world accuracy.
 - Single 2D camera, no depth. All distance and velocity figures are in pixel units, not real-world meters, converting would require camera calibration, which I haven't implemented.
-- No production backend, streaming, or database layer, deliberately out of scope for this phase to focus on perception depth.
+- The backend is a single process with SQLite and an in-process event bus, fine for one machine, not horizontally scalable. There is no authentication, and CORS only allows localhost. Multiple workers, Postgres, and a real message broker (Redis/Kafka) would be the next step up.
+- The backend and dashboard have only been exercised on uploaded video files, not a live camera (RTSP) feed, and the MEDIUM/HIGH alert path has only been verified against scripted data, not a real forklift-plus-person video.
 
 ## What Is Next
 
@@ -149,4 +184,4 @@ Rule based wins on precision mostly because I generated the synthetic anomalies 
 2. Scale up fine tuning with more images and epochs, now that the sampling approach is proven.
 3. Replace synthetic risk/activity/anomaly data with real labeled data, re-run every experiment.
 4. Edge inference optimization (ONNX/TensorRT), containerize with Docker.
-5. Build the event streaming and backend layer.
+5. ~~Build the event streaming and backend layer.~~ Done, see Backend and Dashboard. Follow-ups: live RTSP camera ingestion, authentication, and swapping SQLite/in-process events for Postgres and a broker.

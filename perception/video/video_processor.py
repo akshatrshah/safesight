@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import cv2
 
@@ -160,7 +161,9 @@ class VideoProcessor:
         source_path: str | Path,
         annotated_output_path: str | Path | None = None,
         max_frames: int | None = None,
+        on_frame: Callable[[FrameResult, int], None] | None = None,
     ) -> VideoAnalysisResult:
+        """on_frame(frame_result, total_frames_in_video) fires after each processed frame, used by the backend for live progress and event streaming."""
         cap = cv2.VideoCapture(str(source_path))
         if not cap.isOpened():
             raise FileNotFoundError(f"Could not open video at {source_path}")
@@ -189,6 +192,8 @@ class VideoProcessor:
                 frame_result = self._process_single_frame(frame, frame_index, frame_index / fps)
                 result.frame_results.append(frame_result)
                 result.frames_processed += 1
+                if on_frame is not None:
+                    on_frame(frame_result, total_frames)
 
                 if writer is not None:
                     annotated = self._draw_annotations(frame, frame_result)
